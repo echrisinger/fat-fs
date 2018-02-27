@@ -2,6 +2,8 @@
     "files.associations": {
         "string.h": "c",
         "stat.h": "c",
-        "fat_structs.h": "c"
+        "fat_structs.h": "c",
+        "stdint.h": "c",
+        "errno.h": "c"
     }
 }

@@ -29,77 +29,100 @@
 #include <sys/time.h>
 #include "fat_structs.h"
 
-#ifdef HAVE_SETXATTR
-#include <sys/xattr.h>
-#endif
-
-#define _FAT_DISK_SIZE 10485760
-#define _BLOCK_SIZE 4096
-
 static const char *fat_disk_path = "fat_disk";
-struct Superblock superblock;
-struct Dir_entry dir_entry[4096/]
-// TODO: Need to implement
-/*static void *fat_init(struct fuse_conn_info *conn) {
 
-}*/
+// has '/' at the end.
+static char mountpoint[1024];
+union SuperBlock sb = {};
+struct BlockNode *free_list = NULL;
+union Block table[(_FAT_DISK_SIZE/_BLOCK_SIZE)-1];
 
-// FIRST
+// ----------------------------------------------------
+// Helper methods
+
+void get_abs_path(const char *path, char *dest) {
+	if (*path == '/') {
+		path++;
+	}
+	strcpy(dest, mountpoint);
+	strcat(dest, path);
+}
+
+// ---------------------------------------------------
+
+static void *fat_init(struct fuse_conn_info *conn) {
+	char full_disk_path[1024];
+	get_abs_path(fat_disk_path, full_disk_path);
+	
+	if (access(full_disk_path, F_OK) == -1) {
+		sb.s.n_blocks = (uint32_t) _FAT_DISK_SIZE/_BLOCK_SIZE;
+		sb.s.block_sz = _BLOCK_SIZE;
+		
+		int disk_fd = open(full_disk_path, (O_RDWR | O_CREAT | O_TRUNC));
+		ssize_t sz_res = write(disk_fd, &sb, sizeof(_SUPERBLOCK_SIZE));
+		printf("%s\n", full_disk_path);
+		if (sz_res < 0) {
+			char *err_msg = "Error creating the super block\n";
+			write(2, err_msg, strlen(err_msg));
+			exit(0);
+		}
+
+		union Block root_block = {};
+		*(root_block.b.file_name) = '/';
+		ssize_t sz_block = write(disk_fd, &root_block, sizeof(_BLOCK_SIZE));
+		printf("before assignment\n");
+		table[0] = root_block;
+		sb.s.root_block = 0;
+		
+		// Account all free blocks (only not the root)
+		for (int i=1; i < sb.s.n_blocks-1; i++) {
+			printf("allocating free blocks %d\n", i);
+			union Block empty_block = {};
+			empty_block.b.unused=1;
+			table[i] = empty_block;
+
+			struct BlockNode head = {head.data=i, head.next=free_list};
+			free_list = &head;
+		}
+		close(disk_fd);
+	}
+	return NULL;
+}
+
+// TODO: testing.
 static int fat_getattr(const char *path, struct stat *stbuf)
 {
-	int res;
-
-	struct fuse_file_info *fi = {O_WRONLY | O_CREAT | O_TRUNC};
-	int sb_fd = open(superblock_path, fi);
-	char sb_buf[_BLOCK_SIZE];
-	ssize_t sb_sz = read(sb_fd, sb_buf, _BLOCK_SIZE);
-	
-	if (sb_sz < 0) {
-		write(2, "Error occured reading superblock");
-		exit(0);
+	for (int i = 0; i < sb.s.n_blocks-1; i++) {
+		printf("searching for path\n");
+		if (table[i].b.unused && strcmp(table[i].b.file_name, path)) {
+			stbuf->st_size = table[i].b.file_size;
+			// these should probably change
+			stbuf->st_mode = S_IFDIR | 0777;		
+			stbuf->st_nlink = 2;
+			break;
+		}
 	}
-
-	res = lstat(path, stbuf);
-	if (res == -1)
-		return -errno;
-
 	return 0;
 }
 
+// TODO: Just necessary to run. Does this need more?
 static int fat_access(const char *path, int mask)
 {
-	int res;
-	open(superblock_path, )
-	res = access(path, mask);
-	if (res == -1)
-		return -errno;
-
 	return 0;
 }
 
 static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
-	DIR *dp;
-	struct dirent *de;
+	char abs_path[1024];
+	get_abs_path(path);
 
-	(void) offset;
-	(void) fi;
+	filler(buf, ".", NULL, 0);
+	filler(buf, "..", NULL, 0);
 
-	dp = opendir(path);
-	if (dp == NULL)
-		return -errno;
+//	if (strncmp())
+	
 
-	while ((de = readdir(dp)) != NULL) {
-		struct stat st;
-		memset(&st, 0, sizeof(st));
-		st.st_ino = de->d_ino;
-		st.st_mode = de->d_type << 12;
-		if (filler(buf, de->d_name, &st, 0))
-			break;
-	}
-
-	closedir(dp);
 	return 0;
 }
 
@@ -114,73 +137,19 @@ static int fat_mkdir(const char *path, mode_t mode)
 	return 0;
 }
 
-static int fat_rename(const char *from, const char *to)
-{
-	int res;
-
-	res = rename(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-
-//#ifdef HAVE_SETXATTR
-///* xattr operations are optional and can safely be left unimplemented */
-//static int fat_setxattr(const char *path, const char *name, const char *value,
-//			size_t size, int flags)
-//{
-//	int res = lsetxattr(path, name, value, size, flags);
-//	if (res == -1)
-//		return -errno;
-//	return 0;
-//}
-//
-//static int fat_getxattr(const char *path, const char *name, char *value,
-//			size_t size)
-//{
-//	int res = lgetxattr(path, name, value, size);
-//	if (res == -1)
-//		return -errno;
-//	return res;
-//}
-//
-//static int fat_listxattr(const char *path, char *list, size_t size)
-//{
-//	int res = llistxattr(path, list, size);
-//	if (res == -1)
-//		return -errno;
-//	return res;
-//}
-//
-//static int fat_removexattr(const char *path, const char *name)
-//{
-//	int res = lremovexattr(path, name);
-//	if (res == -1)
-//		return -errno;
-//	return 0;
-//}
-//
-//
-//#endif /* HAVE_SETXATTR */
-
 static struct fuse_operations fat_oper = {
 	.init       = fat_init,
 	.getattr	= fat_getattr,
 	.access		= fat_access,
 	.readdir	= fat_readdir,
 	.mkdir		= fat_mkdir,
-/*#ifdef HAVE_SETXATTR
-	.setxattr	= fat_setxattr,
-	.getxattr	= fat_getxattr,
-	.listxattr	= fat_listxattr,
-	.removexattr	= fat_removexattr,
-#endif*/
 };
 
 int main(int argc, char *argv[])
 {
-    umask(0);
+	umask(0);
+	realpath(argv[1], mountpoint);
+	strcat(mountpoint, "/");
+	printf("Mounting on %s\n", mountpoint);
 	return fuse_main(argc, argv, &fat_oper, NULL);
 }
