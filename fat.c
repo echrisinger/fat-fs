@@ -69,14 +69,29 @@ static void *fat_init(struct fuse_conn_info *conn) {
 		union Block root_block = {};
 		*(root_block.b.file_name) = '/';
 		root_block.b.in_use = 1;
+
+		root_block.b.fat_entry = {_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,
+								_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY,_DEFAULT_ENTRY};
 		ssize_t sz_block = write(disk_fd, &root_block, sizeof(_BLOCK_SIZE));
-		printf("before assignment\n");
 		table[0] = root_block;
 		sb.s.root_block = 0;
 		
 		// Account all free blocks (only not the root)
 		for (int i=1; i < sb.s.n_blocks-1; i++) {
-			printf("allocating free blocks %d\n", i);
 			union Block empty_block = {};
 			empty_block.b.in_use=0;
 			table[i] = empty_block;
@@ -95,7 +110,6 @@ static int fat_getattr(const char *path, struct stat *stbuf)
 	for (int i = 0; i < sb.s.n_blocks-1; i++) {
 		printf("searching for path\n");
 		if (table[i].b.in_use && strcmp(table[i].b.file_name, path)) {
-			stbuf->st_size = table[i].b.file_size;
 			// these should probably change
 			stbuf->st_mode = S_IFDIR | 0777;		
 			stbuf->st_nlink = 2;
@@ -153,11 +167,36 @@ static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 static int fat_mkdir(const char *path, mode_t mode)
 {
-	int res;
+	if (free_list == NULL) {
+		return -ENOSPC;
+	}
 
-	res = mkdir(path, mode);
-	if (res == -1)
-		return -errno;
+	if (strlen(path) > _MAX_FILE_NAME_SZ) {
+		return -ENAMETOOLONG;
+	}
+	
+	char abs_path[1024];
+	get_abs_path(path, abs_path);
+
+	char full_disk_path[1024];
+	get_abs_path(fat_disk_path, full_disk_path);
+	
+	int32_t free_block = free_list->data;
+	free_list = free_list->next;
+	union Block new_block = {};
+	strcpy(new_block.b.file_name, path);
+	time_t curr_time = time(0);
+	new_block.b.creation_time = curr_time;
+	new_block.b.access_time = curr_time;
+	new_block.b.in_use = 1;
+	new_block.b.start_block = _BLOCK_SIZE*free_block + _SUPERBLOCK_SIZE;
+
+	table[free_block] = new_block;
+
+	int disk_fd = open(full_disk_path, (O_RDWR | O_CREAT | O_TRUNC));
+	lseek(disk_fd, new_block.b.start_block, SEEK_SET);
+	ssize_t sz_block = write(disk_fd, &new_block, sizeof(_BLOCK_SIZE));
+	close(disk_fd);
 
 	return 0;
 }

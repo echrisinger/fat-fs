@@ -6,14 +6,14 @@
 #define _BLOCK_SIZE 4096
 #define _SUPERBLOCK_SIZE 512
 #define _DIR_SIZE 64
-
+#define _MAX_FILE_NAME_SZ 1024
+#define _DEFAULT_ENTRY
 union Block {
     struct {
         int32_t fat_entry[_DIR_SIZE];
-        char file_name[1024];
+        char file_name[_MAX_FILE_NAME_SZ];
         int64_t creation_time;
         int64_t access_time;
-        uint32_t file_size;
         int32_t start_block;
         uint32_t flag;
         short in_use;
