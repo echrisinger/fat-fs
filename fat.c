@@ -39,7 +39,7 @@
 static char mountpoint[1024];
 
 // absolute path to the disk backing file
-static char *disk_path = "/tmp/fat_disk";
+static char *disk_path = "/home/evan/fat_disk";
 
 // ----------------------------------------------------
 // Helper methods
@@ -63,33 +63,46 @@ void set_block_offset(int block_num, int disk_fd, union SuperBlock sb)
 }
 
 int find_dir(const char *path, struct DirectoryEntry *dir_ent)
-{
+{	
+	/* "/" 
+	 * "/pizza"
+	 * "/pizza/"
+	 * "makedir pizza"
+	 * "/pizza"
+	 * "/pizza/"
+	 * "makedir pizza2"
+	 * "makedir pizza3"
+	 * ...
+	 * "makedir pizza6"
+	 * should break on makedir pizza7
+	 */
 	int ret_val = 0;
 	
 	int disk_fd = open(disk_path, O_RDONLY);
 	union SuperBlock sb = {}; 
-	read(disk_fd, &sb, _SUPERBLOCK_SIZE);sx
-	int block_num = sb.info.root_block;
-	
-	char *token = strtok((char *) path, "/");
+	read(disk_fd, &sb, _SUPERBLOCK_SIZE);
 	
 	if (path[0] == '/' && strlen(path) == 1) {
-		set_block_offset(block_num, disk_fd, sb);
+		set_block_offset(sb.info.root_block, disk_fd, sb);
+		read(disk_fd, dir_ent, sizeof(*dir_ent));
 	} else if (path[0] == '/') path++;
 	
+	int block_num = sb.info.root_block;
+	char *token = strtok((char *) path, "/");
 pathLoop:
 	while (token != NULL) {
 		for (int i = 0; i < _MAX_DIR_NUM; i++) {
 			read(disk_fd, dir_ent, sizeof(*dir_ent));
+
 			if (dir_ent->in_use && strcmp(token, dir_ent->file_name)) {
 				block_num = dir_ent->start_block;
 				set_block_offset(block_num, disk_fd, sb);
 				token = strtok(NULL, "/");
 				goto pathLoop;
 			}
-			printf(dir_ent.file_name);
 		}
 		ret_val = -ENOENT;
+		break;
 	}
 	close(disk_fd);
 	return ret_val;	
@@ -137,7 +150,7 @@ static void *fat_init(struct fuse_conn_info *conn)
 		for (int b = sizeof(sb); b < _FAT_DISK_SIZE; b++) {
 			write(disk_fd, &z, sizeof(char));
 		}
-		lseek(disk_fd, sizeof(sb), SEEK_SET);
+		set_block_offset(sb.info.root_block, disk_fd, sb);
 
 		// Write root directories self reference and parent after the superblock in backing file.
 		struct DirectoryEntry root = {};
@@ -165,6 +178,24 @@ static void *fat_init(struct fuse_conn_info *conn)
 			exit(0);
 		}
 
+		// Write the rest of the empty blocks creating the linked list.
+
+		struct DirectoryEntry empty_ent = {};
+		empty_ent.in_use = 0;
+
+		union EmptyBlock eb = {};
+		eb.info.in_use = 0;
+		for (int block = 1; block < sb.info.n_blocks; block++) {
+			set_block_offset(block, disk_fd, sb);
+			for(int ent = 0; ent < _MAX_DIR_NUM; ent++) {
+				write(disk_fd, &empty_ent, sizeof(struct DirectoryEntry));		
+			}
+			set_block_offset(block, disk_fd, sb);
+			read(disk_fd, &eb, _BLOCK_SIZE);
+			eb.info.free_block = block+1;
+			set_block_offset(block, disk_fd, sb);
+			write(disk_fd, &eb, _BLOCK_SIZE);
+		}
 		close(disk_fd);
 	}
 	return NULL;
@@ -214,38 +245,33 @@ static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 }
 
 static int fat_mkdir(const char *path, mode_t mode)
-{
-	int last_slash;
-	short past_final_slashes = 0;
-	for (int i=strlen(path)-1; i >= 0; i++) {
-		// last char of path is /, ignore it
-		if (!past_final_slashes && path[i] == '/') {
-			continue;
-		} else if(!past_final_slashes && path[i] != '/') {
-			past_final_slashes = 1;
-			continue;
-		}
-
-		if (path[i] == '/') {
-			last_slash = i;
-			break;
-		}
+{		
+	char *tokens[100];
+	tokens[0] = strtok((char *) path, "/");
+	int i = 0;
+	while(tokens[i] != NULL) {
+		i++;
+		tokens[i] = strtok(NULL, "/");
+	}
+	char subpath[100];
+	for (int j = 0; j < i-1; j++) {
+		strcat(subpath, "/");
+		strcat(subpath, tokens[j]);
 	}
 
-	char *subpath = malloc(strlen(path));
-	memcpy(subpath, path, last_slash);
-	subpath[last_slash+1] = '\0';
-	
+	char *file_name = tokens[i-1];
+
 	struct DirectoryEntry dir_ent = {};
 	find_dir(subpath, &dir_ent);
 
 	int disk_fd = open(disk_path, O_RDWR);
 	union SuperBlock sb = {};
 	read(disk_fd, &sb, sizeof(_SUPERBLOCK_SIZE));	
-	if (sb.info.free_block >= _SUPERBLOCK_SIZE) {
+	if (sb.info.free_block >= sb.info.n_blocks) {
+		printf("free_block: %d n_blocks: %d\n", sb.info.free_block, sb.info.n_blocks);
 		close(disk_fd);
 		return -ENOSPC;
-	} else if (strlen(path) - last_slash + 1 > _MAX_FILE_NAME_SZ) {
+	} else if (strlen(file_name)+1 > _MAX_FILE_NAME_SZ) {
 		close(disk_fd);
 		return -ENAMETOOLONG;
 	}
@@ -256,10 +282,11 @@ static int fat_mkdir(const char *path, mode_t mode)
 
 	time_t curr_time = time(0);	
 	for (int i = 0; i < _MAX_DIR_NUM; i++) {
+		printf("%s in use? %d \n", dir_ent.file_name, dir_ent.in_use);
 		if (!dir_ent.in_use) {
 			dir_ent.in_use = 1;
 			dir_ent.start_block = sb.info.free_block;
-			memcpy(dir_ent.file_name, path+last_slash+1, strlen(path)-last_slash+1);
+			memcpy(dir_ent.file_name, tokens, strlen(file_name)+1);
 
 			dir_ent.last_access = (long) curr_time;
 			dir_ent.last_modification = (long) curr_time;
@@ -279,7 +306,7 @@ static int fat_mkdir(const char *path, mode_t mode)
 	// ...
 	struct DirectoryEntry self_dir = {};
 	char *self_name   = ".";
-	memcpy(self_dir.file_name, self_name, strlen(self_name));	
+	memcpy(self_dir.file_name, self_name, strlen(self_name)+1);	
 	self_dir.in_use 	 = 1;
 	self_dir.start_block = curr_block;
 	self_dir.last_access = (long) curr_time;
@@ -288,7 +315,7 @@ static int fat_mkdir(const char *path, mode_t mode)
 
 	struct DirectoryEntry parent_dir = {};
 	char *parent_name = "..";
-	memcpy(parent_dir.file_name, parent_name, strlen(parent_name));
+	memcpy(parent_dir.file_name, parent_name, strlen(parent_name)+1);
 	parent_dir.in_use 	   = 1;
 	parent_dir.start_block = parent_block;
 	parent_dir.last_access = (long) curr_time;
