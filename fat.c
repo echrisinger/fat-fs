@@ -159,7 +159,6 @@ static void *fat_init(struct fuse_conn_info *conn)
 		root.start_block = 0;
 		root.file_length = 0;
 		
-		
 		if (write(disk_fd, &root, sizeof(root)) != sizeof(root)) {
 			char *err_msg = "Root dir not written to proper size.\n";
 			write(2, err_msg, strlen(err_msg));
@@ -238,7 +237,7 @@ static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		if (dir_ent.in_use) {
 			struct stat stbuf = {};
 			fill_stat(&stbuf, dir_ent);
-			filler(buf, dir_ent.file_name, &stbuf, dir_ent.start_block);
+			filler(buf, dir_ent.file_name, &stbuf, i);
 		}
 	}
 	return 0;
@@ -268,7 +267,6 @@ static int fat_mkdir(const char *path, mode_t mode)
 	union SuperBlock sb = {};
 	read(disk_fd, &sb, sizeof(_SUPERBLOCK_SIZE));	
 	if (sb.info.free_block >= sb.info.n_blocks) {
-		printf("free_block: %d n_blocks: %d\n", sb.info.free_block, sb.info.n_blocks);
 		close(disk_fd);
 		return -ENOSPC;
 	} else if (strlen(file_name)+1 > _MAX_FILE_NAME_SZ) {
@@ -282,7 +280,6 @@ static int fat_mkdir(const char *path, mode_t mode)
 
 	time_t curr_time = time(0);	
 	for (int i = 0; i < _MAX_DIR_NUM; i++) {
-		printf("%s in use? %d \n", dir_ent.file_name, dir_ent.in_use);
 		if (!dir_ent.in_use) {
 			dir_ent.in_use = 1;
 			dir_ent.start_block = sb.info.free_block;
