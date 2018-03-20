@@ -5,6 +5,7 @@
         "fat_structs.h": "c",
         "stdint.h": "c",
         "errno.h": "c",
-        "stdlib.h": "c"
+        "stdlib.h": "c",
+        "stdio.h": "c"
     }
 }
