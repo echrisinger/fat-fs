@@ -76,7 +76,6 @@ int find_dir(const char *path, struct DirectoryEntry *dir_ent)
 	
 	union SuperBlock sb = {}; 
 	read(disk_fd, &sb, sizeof(union SuperBlock));
-	printf("superblock free block: %d\n", sb.info.free_block);
 	
 	union Block curr_block = {};
 	set_block_offset(sb.info.root_block, disk_fd, sb);
@@ -156,7 +155,6 @@ void create_root_block(union Block *root_bl) {
 	root_bl->block.in_use = 1;
 	root_bl->block.start_block = 0;
 	strcpy(root_bl->block.file_name, "/");
-	
 	
 	struct DirectoryEntry root = {};
 	root.in_use = 1;
@@ -295,7 +293,6 @@ static int fat_getattr(const char *path, struct stat *stbuf)
 static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
-	printf("path: %s\n", path);
 	struct DirectoryEntry parent_dir_ent = {};
 	int res = find_dir(path, &parent_dir_ent);
 
@@ -317,18 +314,14 @@ static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	read(disk_fd, &dir_block, sizeof(union Block));
 
 	struct DirectoryEntry dir_ent = {};
-	for (int i = 0; i < _MAX_DIR_NUM; i++) {
+	printf("offset: %d\n", offset);
+	for (int i = offset; i < _MAX_DIR_NUM; i++) {
 		dir_ent = dir_block.block.dir_ents[i];
 		if (dir_ent.in_use) {
-			printf("dir_ent name: %s", dir_ent.file_name);
-			struct stat stbuf = {};
-			fill_stat(&stbuf, dir_ent);
-			if (i == 0) {
-				printf("dir_ent.start_block: %d\n", dir_ent.start_block);
-				filler(buf, dir_ent.file_name, NULL, dir_ent.start_block);
-			} else {
-				filler(buf, dir_ent.file_name, NULL, 0);
-			}
+			printf("i: %d\n", i);
+			int res = filler(buf, dir_ent.file_name, NULL, i+1);
+			// TODO: Check if fuse can't handle that many requests
+			// if (res ==)
 		}
 	}
 
@@ -347,7 +340,7 @@ static int fat_mkdir(const char *path, mode_t mode)
 		tokens[i] = strtok(NULL, "/");
 	}
 
-	char *subpath = "";
+	char *subpath = malloc(4096);
 	for (int j = 0; j < i-1; j++) {
 		strcat(subpath, "/");
 		strcat(subpath, tokens[j]);
@@ -399,7 +392,7 @@ static int fat_mkdir(const char *path, mode_t mode)
 			return -ENOSPC;
 		}
 	}
-
+	
 	set_block_offset(dir_ent.start_block, disk_fd, sb);
 	write(disk_fd, &parent_block, _BLOCK_SIZE);
 
