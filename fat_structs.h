@@ -26,7 +26,6 @@ struct DirectoryEntry {
 
 union Block {
     struct {
-        short in_use;
         int32_t start_block;
         int32_t file_length;
         char file_name[_MAX_FILE_NAME_SZ];
