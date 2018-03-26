@@ -166,9 +166,11 @@ void create_SuperBlock(union SuperBlock *sb) {
 	sb->info.root_block = 0;
 	sb->info.free_block = 1;
 	sb->info.block_size = sizeof(union Block);
-
+	
 	// Calculate the size of the FAT and the number of actual blocks in the table/disk.
 	sb->info.n_blocks = _FAT_DISK_SIZE / sizeof(union Block) - get_backing_blocks_size();
+	// Corresponding to the root block
+	sb->info.num_free_blocks = sb->info.n_blocks - 1;
 }
 
 void create_Root_Block(union Block *root_bl) {
@@ -515,7 +517,6 @@ static int fat_open(const char* path, struct fuse_file_info* fi) {
 }
 
 static int fat_read(const char* path, char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-	//TODO: Fix
 	struct DirectoryEntry dir_ent = {};
 	int res = read_DirectoryEntry(path, &dir_ent);
 	if (res < 0) {
@@ -697,14 +698,21 @@ static int fat_truncate(const char* path, off_t size) {
 		}
 	}
 
-	
+	int orig_size = parent_block.block.dir_ents[i].file_length;
+	parent_block.block.dir_ents[i].file_length = size;
+	write_Block(&parent_block, res);
 
-	if (parent_block.block.dir_ents[i].file_length <= size) {
+	if (orig_size <= size) {
+		int n_zeros = size - parent_block.block.dir_ents[i].file_length;
+		char * zeros = malloc(n_zeros);		
+		memset(zeros, 0, n_zeros);
+		int res = fat_write(path, zeros, n_zeros, orig_size, NULL);
+		if (res < 0) {
+			return res;
+		}
 		return 0;
 	}
 
-	parent_block.block.dir_ents[i].file_length = size;
-	write_Block(&parent_block, res);
 	
 	struct FatEntry *prev = &table[parent_block.block.start_block];
 	struct FatEntry *next = prev;
@@ -874,6 +882,7 @@ static int fat_statfs(const char* path, struct statvfs* stbuf) {
 	return 0;
 }
 
+// Some of these are only implemented because of errors in debug console w/o them
 static int fat_utimens(const char* path, const struct timespec ts[2]) {
 	return 0;
 }

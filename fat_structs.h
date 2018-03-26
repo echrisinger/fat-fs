@@ -41,6 +41,7 @@ union SuperBlock {
         uint32_t free_block; // reference to next free block (block itself contains reference to the next free block)
         uint32_t block_size;
         uint32_t n_blocks; // 10485760 / 4096 = 2560 entries total
+        uint32_t num_free_blocks;
     } info;
     char pad[_SUPERBLOCK_SIZE]; // ensure it is at least a block in size
 };
