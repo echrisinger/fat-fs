@@ -102,7 +102,6 @@ int read_DirectoryEntry(const char *path, struct DirectoryEntry *dir_ent)
 		
 	union Block curr_block = {};
 	read_Block(&curr_block, sb.info.root_block);
-
 	if (!strcmp(path, "/")) {
 		memcpy(dir_ent, curr_block.block.dir_ents, sizeof(struct DirectoryEntry));
 		return ret_val;
@@ -110,16 +109,32 @@ int read_DirectoryEntry(const char *path, struct DirectoryEntry *dir_ent)
 	
 	char *token = strtok((char *) path, "/");
 	struct DirectoryEntry curr_dir_ent;
+
+	int block_num = sb.info.root_block;
+	struct FatEntry *prev = &table[sb.info.root_block];
+	struct FatEntry *next = prev;
+
 pathLoop:
 	while (token != NULL) {
-		for (int i = 0; i < _MAX_DIR_NUM; i++) {
-			curr_dir_ent = curr_block.block.dir_ents[i];
-			if (curr_dir_ent.in_use && !strcmp(token, curr_dir_ent.file_name)) {
-				read_Block(&curr_block, curr_dir_ent.start_block);
-				token = strtok(NULL, "/");
-				goto pathLoop;
+		while(block_num >= 0) {
+			read_Block(&curr_block, block_num);
+			
+			prev = next;
+			next = &table[next->next];
+			block_num = prev->next;
+
+			for (int i = 0; i < _MAX_DIR_NUM; i++) {
+				curr_dir_ent = curr_block.block.dir_ents[i];
+				if (curr_dir_ent.in_use && !strcmp(token, curr_dir_ent.file_name)) {
+					block_num = curr_dir_ent.start_block;
+					prev = &table[block_num];
+					next = prev;
+					token = strtok(NULL, "/");
+					goto pathLoop;
+				}
 			}
 		}
+
 		ret_val = -ENOENT;
 		break;
 	}
@@ -195,21 +210,22 @@ void create_Root_Block(union Block *root_bl) {
 }
 
 void create_Block(union Block *new_block, char *file_name, int parent_block) {
-
 	new_block->block.start_block = sb.info.free_block;
-	strcpy(new_block->block.file_name, file_name);
-
-	struct DirectoryEntry self_dir = {};
-	strcpy(self_dir.file_name, ".");	
-	self_dir.in_use 	 = 1;
-	self_dir.start_block = new_block->block.start_block;
-	memcpy(&new_block->block.dir_ents[0], &self_dir, sizeof(struct DirectoryEntry));
-
-	struct DirectoryEntry parent_dir = {};
-	strcpy(parent_dir.file_name, "..");
-	parent_dir.in_use 	   = 1;
-	parent_dir.start_block = parent_block;
-	memcpy(&new_block->block.dir_ents[1], &parent_dir, sizeof(struct DirectoryEntry));
+	if (strcmp(file_name, "")) {
+		strcpy(new_block->block.file_name, file_name);
+	
+		struct DirectoryEntry self_dir = {};
+		strcpy(self_dir.file_name, ".");	
+		self_dir.in_use 	 = 1;
+		self_dir.start_block = new_block->block.start_block;
+		memcpy(&new_block->block.dir_ents[0], &self_dir, sizeof(struct DirectoryEntry));
+	
+		struct DirectoryEntry parent_dir = {};
+		strcpy(parent_dir.file_name, "..");
+		parent_dir.in_use 	   = 1;
+		parent_dir.start_block = parent_block;
+		memcpy(&new_block->block.dir_ents[1], &parent_dir, sizeof(struct DirectoryEntry));
+	}
 }
 
 void create_FatTable(struct FatEntry *table) {
@@ -369,28 +385,50 @@ static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	struct DirectoryEntry parent_dir_ent = {};
 	int res = read_DirectoryEntry(path, &parent_dir_ent);
 
+	int block_num = parent_dir_ent.start_block;
 	union Block dir_block = {};
 	if(!strcmp(path, "/")) {
-		read_Block(&dir_block, sb.info.root_block);
-	} else {
-		if(res == -ENOENT) {
-			return res;
-		}
-		read_Block(&dir_block, parent_dir_ent.start_block);
-	}
-	
-	struct DirectoryEntry dir_ent = {};
-	for (int i = offset; i < _MAX_DIR_NUM; i++) {
-		dir_ent = dir_block.block.dir_ents[i];
-		if (dir_ent.in_use) {
-			struct stat st = {};
-			fill_stat(&st, dir_ent);
-			if(filler(buf, dir_ent.file_name, &st, i+1)) {
-				return 0;
-			}
-		}
+		block_num = sb.info.root_block;
+	} else if(res == -ENOENT) {
+		return res;
 	}
 
+	struct FatEntry *prev = &table[block_num];
+	struct FatEntry *next = &table[block_num];
+	int block_acc = 0;
+	struct DirectoryEntry dir_ent = {};
+	
+	while (block_num >= 0) {
+		printf("in loop\n");
+		read_Block(&dir_block, block_num);
+		block_acc++;
+		
+		prev = next;
+		next = &table[next->next];
+		block_num = prev->next;
+		
+		if (_MAX_DIR_NUM * block_acc <= offset) {
+			continue;
+		} else {
+			int i = 0;
+			if (_MAX_DIR_NUM * (block_acc-1) <= offset && _MAX_DIR_NUM * block_acc > offset) {
+				i = offset;
+			}
+
+			for (; i < _MAX_DIR_NUM; i++) {
+				dir_ent = dir_block.block.dir_ents[i];
+				if (dir_ent.in_use) {
+					struct stat st = {};
+					fill_stat(&st, dir_ent);
+					if(filler(buf, dir_ent.file_name, &st, _MAX_DIR_NUM*block_acc+i+1)) {
+						return 0;
+					}
+				}
+			}
+		}
+
+	}
+	
 	return 0;
 }
 
@@ -409,28 +447,58 @@ static int fat_mkdir(const char *path, mode_t mode)
 	int res = get_path_block((char *) subpath, &parent_block);
 
 	
+	int block_num = res;
 	if (path_tokens_sz == 1) {
-		read_Block(&parent_block, sb.info.root_block);
+		block_num = sb.info.root_block;
 	} else if (res < 0) {
 		return res;
 	}
 
-	
-	for (int i = 0; i < _MAX_DIR_NUM; i++) {
-		struct DirectoryEntry parent_dir_ent = parent_block.block.dir_ents[i];
-		if (!parent_dir_ent.in_use) {
-			parent_dir_ent.in_use = 1;
-			parent_dir_ent.start_block = sb.info.free_block;
-			strcpy(parent_dir_ent.file_name, file_name);
-			memcpy(&parent_block.block.dir_ents[i], &parent_dir_ent, sizeof(struct DirectoryEntry));
-			break;
+	struct FatEntry *prev = &table[res];
+	struct FatEntry *next = prev;
+
+	short wroteToBlock = 0;
+
+dirLoop:
+	while (!wroteToBlock) {
+		read_Block(&parent_block, block_num);
+		for (int i = 0; i < _MAX_DIR_NUM; i++) {
+			struct DirectoryEntry parent_dir_ent = parent_block.block.dir_ents[i];
+			if (!parent_dir_ent.in_use) {
+				parent_dir_ent.in_use = 1;
+				parent_dir_ent.start_block = sb.info.free_block;
+				strcpy(parent_dir_ent.file_name, file_name);
+				memcpy(&parent_block.block.dir_ents[i], &parent_dir_ent, sizeof(struct DirectoryEntry));
+				wroteToBlock = 1;
+				goto dirLoop;
+			}
 		}
-		if (i == _MAX_DIR_NUM - 1) {
-			return -ENOSPC;
+		
+		prev = next;
+		next = &table[next->next];
+		block_num = prev->next;
+		if (block_num == -1) {
+			if (sb.info.free_block >= sb.info.n_blocks) {
+				return -ENOSPC;
+			}
+			struct FatEntry *temp = &table[sb.info.free_block];
+			prev->next = sb.info.free_block;
+
+			union Block new_blk = {};
+			create_Block(&new_blk, "", -1);
+			write_Block(&new_blk, sb.info.free_block);
+
+			sb.info.free_block = temp->next;
+			write_SuperBlock(&sb);
+
+			temp->next = -1;
+			next = temp;
+			block_num = prev->next;
+			write_FatTable(table);
 		}
 	}
 
-	write_Block(&parent_block, res);
+	write_Block(&parent_block, block_num);
 
 	// Create the new block after the parent block.
 	union Block new_block = {};
