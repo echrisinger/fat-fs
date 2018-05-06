@@ -96,37 +96,40 @@ int write_Block(union Block *curr_block, int block_num) {
 	return write(disk_fd, curr_block, sizeof(union Block));
 }
 
-int read_DirectoryEntry(const char *path, struct DirectoryEntry *dir_ent)
+int read_DirectoryEntry(const char *path, union DirectoryEntry *dir_ent)
 {	
 	int ret_val = 0;
-		
+	
 	union Block curr_block = {};
 	read_Block(&curr_block, sb.info.root_block);
 	if (!strcmp(path, "/")) {
-		memcpy(dir_ent, curr_block.block.dir_ents, sizeof(struct DirectoryEntry));
+		memcpy(dir_ent, curr_block.block.dir_ents, sizeof(union DirectoryEntry));
 		return ret_val;
 	}
 	
 	char *token = strtok((char *) path, "/");
-	struct DirectoryEntry curr_dir_ent;
+	union DirectoryEntry curr_dir_ent;
 
 	int block_num = sb.info.root_block;
 	struct FatEntry *prev = &table[sb.info.root_block];
 	struct FatEntry *next = prev;
-
+	
 pathLoop:
 	while (token != NULL) {
 		while(block_num >= 0) {
+		
 			read_Block(&curr_block, block_num);
 			
+			ret_val = block_num;
 			prev = next;
-			next = &table[next->next];
+			next = &table[next->next];			
 			block_num = prev->next;
-
+			
+		
 			for (int i = 0; i < _MAX_DIR_NUM; i++) {
 				curr_dir_ent = curr_block.block.dir_ents[i];
-				if (curr_dir_ent.in_use && !strcmp(token, curr_dir_ent.file_name)) {
-					block_num = curr_dir_ent.start_block;
+				if (curr_dir_ent.hardlink.in_use && !strcmp(token, curr_dir_ent.hardlink.file_name)) {
+					block_num = curr_dir_ent.hardlink.start_block;
 					prev = &table[block_num];
 					next = prev;
 					token = strtok(NULL, "/");
@@ -138,30 +141,31 @@ pathLoop:
 		ret_val = -ENOENT;
 		break;
 	}
-	memcpy(dir_ent, &curr_dir_ent, sizeof(struct DirectoryEntry));
+
+	memcpy(dir_ent, &curr_dir_ent, sizeof(union DirectoryEntry));
 
 	return ret_val;
 }
 
-int write_DirectoryEntry(const char *path, struct DirectoryEntry *dir_ent) {
+int write_DirectoryEntry(const char *path, union DirectoryEntry *dir_ent) {
 	int ret_val = 0;
 		
 	union Block curr_block = {};
 	read_Block(&curr_block, sb.info.root_block);
 
 	if (!strcmp(path, "/")) {
-		memcpy(dir_ent, curr_block.block.dir_ents, sizeof(struct DirectoryEntry));
+		memcpy(dir_ent, curr_block.block.dir_ents, sizeof(union DirectoryEntry));
 		return ret_val;
 	}
 	
 	char *token = strtok((char *) path, "/");
-	struct DirectoryEntry curr_dir_ent;
+	union DirectoryEntry curr_dir_ent;
 pathLoop:
 	while (token != NULL) {
 		for (int i = 0; i < _MAX_DIR_NUM; i++) {
 			curr_dir_ent = curr_block.block.dir_ents[i];
-			if (curr_dir_ent.in_use && !strcmp(token, curr_dir_ent.file_name)) {
-				read_Block(&curr_block, curr_dir_ent.start_block);
+			if (curr_dir_ent.hardlink.in_use && !strcmp(token, curr_dir_ent.hardlink.file_name)) {
+				read_Block(&curr_block, curr_dir_ent.hardlink.start_block);
 				token = strtok(NULL, "/");
 				goto pathLoop;
 			}
@@ -171,7 +175,7 @@ pathLoop:
 	}
 
 	
-	memcpy(dir_ent, &curr_dir_ent, sizeof(struct DirectoryEntry));
+	memcpy(dir_ent, &curr_dir_ent, sizeof(union DirectoryEntry));
 
 	return ret_val;
 }
@@ -194,19 +198,19 @@ void create_Root_Block(union Block *root_bl) {
 	root_bl->block.start_block = 0;
 	strcpy(root_bl->block.file_name, "/");
 	
-	struct DirectoryEntry root = {};
-	root.in_use = 1;
-	strcpy(root.file_name, ".");
-	root.start_block = 0;
-	root.file_length = 0;
-	memcpy(&root_bl->block.dir_ents[0], &root, sizeof(struct DirectoryEntry));
+	union DirectoryEntry root = {};
+	root.hardlink.in_use = 1;
+	strcpy(root.hardlink.file_name, ".");
+	root.hardlink.start_block = 0;
+	root.hardlink.file_length = 0;
+	memcpy(&root_bl->block.dir_ents[0], &root, sizeof(union DirectoryEntry));
 	
-	struct DirectoryEntry root_parent = {};
-	root_parent.in_use = 1;
-	strcpy(root_parent.file_name, "..");
-	root_parent.start_block = 0;
-	root_parent.file_length = 0;
-	memcpy(&root_bl->block.dir_ents[1], &root_parent, sizeof(struct DirectoryEntry));
+	union DirectoryEntry root_parent = {};
+	root_parent.hardlink.in_use = 1;
+	strcpy(root_parent.hardlink.file_name, "..");
+	root_parent.hardlink.start_block = 0;
+	root_parent.hardlink.file_length = 0;
+	memcpy(&root_bl->block.dir_ents[1], &root_parent, sizeof(union DirectoryEntry));
 }
 
 void create_Block(union Block *new_block, char *file_name, int parent_block) {
@@ -214,17 +218,17 @@ void create_Block(union Block *new_block, char *file_name, int parent_block) {
 	if (strcmp(file_name, "")) {
 		strcpy(new_block->block.file_name, file_name);
 	
-		struct DirectoryEntry self_dir = {};
-		strcpy(self_dir.file_name, ".");	
-		self_dir.in_use 	 = 1;
-		self_dir.start_block = new_block->block.start_block;
-		memcpy(&new_block->block.dir_ents[0], &self_dir, sizeof(struct DirectoryEntry));
+		union DirectoryEntry self_dir = {};
+		strcpy(self_dir.hardlink.file_name, ".");	
+		self_dir.hardlink.in_use 	 = 1;
+		self_dir.hardlink.start_block = new_block->block.start_block;
+		memcpy(&new_block->block.dir_ents[0], &self_dir, sizeof(union DirectoryEntry));
 	
-		struct DirectoryEntry parent_dir = {};
-		strcpy(parent_dir.file_name, "..");
-		parent_dir.in_use 	   = 1;
-		parent_dir.start_block = parent_block;
-		memcpy(&new_block->block.dir_ents[1], &parent_dir, sizeof(struct DirectoryEntry));
+		union DirectoryEntry parent_dir = {};
+		strcpy(parent_dir.hardlink.file_name, "..");
+		parent_dir.hardlink.in_use 	   = 1;
+		parent_dir.hardlink.start_block = parent_block;
+		memcpy(&new_block->block.dir_ents[1], &parent_dir, sizeof(union DirectoryEntry));
 	}
 }
 
@@ -233,12 +237,9 @@ void create_FatTable(struct FatEntry *table) {
 	table[0].next = -1;
 	
 	struct FatEntry empty_entry = {in_use: 0};
+	memset(&empty_entry, '\0', sizeof(struct FatEntry));
 	for (int i = 1; i < sb.info.n_blocks; i++) {
-		if (i != sb.info.n_blocks-1) {
-			empty_entry.next = i+1;
-		} else {
-			empty_entry.next = -1;
-		}
+		empty_entry.next = i+1;
 		memcpy(&table[i], &empty_entry, sizeof(struct FatEntry));
 	}
 }
@@ -259,57 +260,58 @@ int split_subpath_filename(char *path, char *subpath, char *file_name) {
 	}
 
 	strcpy(file_name, tokens[i-1]);
-	for (int x = 0; x < i; x++) {
+	/*for (int x = 0; x < i; x++) {
 		free(tokens[i]);
-	}
+	}*/
 	
 	return i;
 }
 
 int get_path_block(char *subpath, union Block *block) {
-	if (sb.info.free_block >= sb.info.n_blocks) {
-		return -ENOSPC;
-	}
-
-	struct DirectoryEntry dir_ent = {};
+	union DirectoryEntry dir_ent = {};
 	if (strlen(subpath) > 0 && read_DirectoryEntry(subpath, &dir_ent) == -ENOENT) {
 		return -ENOENT;
 	}
 
-	read_Block(block, dir_ent.start_block);
-	return dir_ent.start_block;
+	read_Block(block, dir_ent.hardlink.start_block);
+	return dir_ent.hardlink.start_block;
 }
 
-void fill_stat(struct stat *stbuf, struct DirectoryEntry dir_ent) {
+void fill_stat(struct stat *stbuf, union DirectoryEntry dir_ent) {
 	struct fuse_context *context = fuse_get_context();
-	struct FatEntry table_entry = table[dir_ent.start_block];
-
-	if (table_entry.in_use == 1) {
-		stbuf->st_mode   = S_IFDIR | 0666;
+	if (dir_ent.symlink.in_use == 3) {
+		stbuf->st_mode   = S_IFLNK | 0755;
 	} else {
-		stbuf->st_mode	 = S_IFREG | 0666;
+		struct FatEntry table_entry = table[dir_ent.hardlink.start_block];
+		if (table_entry.in_use == 1) {
+			stbuf->st_mode   = S_IFDIR | 0755;
+		} else if (table_entry.in_use == 2) {
+			stbuf->st_mode	 = S_IFREG | 0755;
+		}
+		stbuf->st_ino = dir_ent.hardlink.start_block;
+		stbuf->st_size = dir_ent.hardlink.file_length;
 	}
 	stbuf->st_atime  = time(0);
 	stbuf->st_mtime  = time(0);
-	stbuf->st_ino    = dir_ent.start_block;
 	stbuf->st_nlink  = 1;
 	stbuf->st_uid	 = (int) context->uid;
 	stbuf->st_gid	 = (int) context->gid;
 	stbuf->st_blocks = sizeof(union Block) / 512;
-	stbuf->st_size   = dir_ent.file_length;
 }
 
 // ---------------------------------------------------
 
 static void *fat_init(struct fuse_conn_info *conn) 
 {
+	table = malloc(_BLOCK_SIZE);
+	memset(table, '\0', _BLOCK_SIZE);
 
 	if (access(disk_path, F_OK) == -1) {
 		// Zero out the entire disk and reset position.
 		disk_fd = open(disk_path, (O_RDWR | O_CREAT), 0777);
-		char* FULL_DISK = (char *) malloc(_FAT_DISK_SIZE);
-		memset(FULL_DISK, 0, _FAT_DISK_SIZE);
-		write(disk_fd, &FULL_DISK, _FAT_DISK_SIZE);
+		char *FULL_DISK = malloc(_FAT_DISK_SIZE);
+		memset(FULL_DISK, '\0', _FAT_DISK_SIZE);
+		write(disk_fd, FULL_DISK, _FAT_DISK_SIZE);
 		lseek(disk_fd, 0, SEEK_SET);
 
 		// Create the Superblock and write it.
@@ -343,12 +345,11 @@ static void *fat_init(struct fuse_conn_info *conn)
 		}
 		
 		// Populate the table entries and write them
-		table = malloc(sizeof(struct FatEntry)*sb.info.n_blocks);
 		create_FatTable(table);
 		write_FatTable(table);
-		
 		free(FULL_DISK);
 	} else {
+		disk_fd = open(disk_path, O_RDWR, 0777);
 		read_SuperBlock(&sb);
 		read_FatTable(table);
 	}
@@ -357,35 +358,37 @@ static void *fat_init(struct fuse_conn_info *conn)
 
 static int fat_access(const char *path, int mask)
 {
-	struct DirectoryEntry dir_ent = {};
+	union DirectoryEntry dir_ent = {};
 	int res = read_DirectoryEntry(path, &dir_ent);
-	return res;
+	if (res < 0) {
+		return res;
+	}
+	return 0;
 }
 
 
 static int fat_getattr(const char *path, struct stat *stbuf)
 {
 	memset(stbuf, 0, sizeof(struct stat));
-	struct DirectoryEntry dir_ent = {};
+	union DirectoryEntry dir_ent = {};
 	int res = read_DirectoryEntry(path, &dir_ent);
-	if (res == -ENOENT) {
+	if (res < 0) {
 		return res;
 	}
 	fill_stat(stbuf, dir_ent);
 	if (strcmp(path, "/")) {
 		stbuf->st_nlink = 2;
 	}
-	return res;
+	return 0;
 }
 
 
 static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
-	struct DirectoryEntry parent_dir_ent = {};
+	union DirectoryEntry parent_dir_ent = {};
 	int res = read_DirectoryEntry(path, &parent_dir_ent);
-
-	int block_num = parent_dir_ent.start_block;
+	int block_num = parent_dir_ent.hardlink.start_block;
 	union Block dir_block = {};
 	if(!strcmp(path, "/")) {
 		block_num = sb.info.root_block;
@@ -393,13 +396,15 @@ static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		return res;
 	}
 
+
 	struct FatEntry *prev = &table[block_num];
 	struct FatEntry *next = &table[block_num];
 	int block_acc = 0;
-	struct DirectoryEntry dir_ent = {};
-	
+	union DirectoryEntry dir_ent = {};
+
+
 	while (block_num >= 0) {
-		printf("in loop\n");
+	
 		read_Block(&dir_block, block_num);
 		block_acc++;
 		
@@ -417,10 +422,10 @@ static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 			for (; i < _MAX_DIR_NUM; i++) {
 				dir_ent = dir_block.block.dir_ents[i];
-				if (dir_ent.in_use) {
+				if (dir_ent.hardlink.in_use) {
 					struct stat st = {};
 					fill_stat(&st, dir_ent);
-					if(filler(buf, dir_ent.file_name, &st, _MAX_DIR_NUM*block_acc+i+1)) {
+					if(filler(buf, dir_ent.hardlink.file_name, &st, _MAX_DIR_NUM*block_acc+i+1)) {
 						return 0;
 					}
 				}
@@ -428,7 +433,6 @@ static int fat_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		}
 
 	}
-	
 	return 0;
 }
 
@@ -440,6 +444,8 @@ static int fat_mkdir(const char *path, mode_t mode)
 
 	if (strlen(file_name) >= _MAX_FILE_NAME_SZ) {
 		return -ENAMETOOLONG;
+	} else if (sb.info.num_free_blocks <= 0) {
+		return -ENOSPC;
 	}
 
 
@@ -463,12 +469,12 @@ dirLoop:
 	while (!wroteToBlock) {
 		read_Block(&parent_block, block_num);
 		for (int i = 0; i < _MAX_DIR_NUM; i++) {
-			struct DirectoryEntry parent_dir_ent = parent_block.block.dir_ents[i];
-			if (!parent_dir_ent.in_use) {
-				parent_dir_ent.in_use = 1;
-				parent_dir_ent.start_block = sb.info.free_block;
-				strcpy(parent_dir_ent.file_name, file_name);
-				memcpy(&parent_block.block.dir_ents[i], &parent_dir_ent, sizeof(struct DirectoryEntry));
+			union DirectoryEntry parent_dir_ent = parent_block.block.dir_ents[i];
+			if (!parent_dir_ent.hardlink.in_use) {
+				parent_dir_ent.hardlink.in_use = 1;
+				parent_dir_ent.hardlink.start_block = sb.info.free_block;
+				strcpy(parent_dir_ent.hardlink.file_name, file_name);
+				memcpy(&parent_block.block.dir_ents[i], &parent_dir_ent, sizeof(union DirectoryEntry));
 				wroteToBlock = 1;
 				goto dirLoop;
 			}
@@ -478,7 +484,7 @@ dirLoop:
 		next = &table[next->next];
 		block_num = prev->next;
 		if (block_num == -1) {
-			if (sb.info.free_block >= sb.info.n_blocks) {
+			if (sb.info.num_free_blocks <= 0) {
 				return -ENOSPC;
 			}
 			struct FatEntry *temp = &table[sb.info.free_block];
@@ -489,6 +495,7 @@ dirLoop:
 			write_Block(&new_blk, sb.info.free_block);
 
 			sb.info.free_block = temp->next;
+			sb.info.num_free_blocks--;
 			write_SuperBlock(&sb);
 
 			temp->next = -1;
@@ -509,11 +516,13 @@ dirLoop:
 	// Write the newly updated SuperBlock
 	struct FatEntry *entry = &table[new_block.block.start_block];
 	sb.info.free_block = entry->next;
+	sb.info.num_free_blocks--;
 	entry->next   = -1;
 	entry->in_use = 1;
 	write_FatTable(table);
 	write_SuperBlock(&sb);
-
+	
+	printf("mkdir_free\n");
 	free(subpath);
 	free(file_name);
 	return 0;
@@ -526,42 +535,77 @@ static int fat_mknod(const char* path, mode_t mode, dev_t rdev) {
 		return -EACCES;
 	}
 
-	char *subpath = malloc(4096);
-	char *file_name = malloc(4096);
+	char *subpath      = malloc(4096);
+	char *file_name    = malloc(4096);
 	int path_tokens_sz = split_subpath_filename((char *) path, subpath, file_name);
 
 	if (strlen(file_name) >= _MAX_FILE_NAME_SZ) {
 		return -ENAMETOOLONG;
+	} else if (sb.info.num_free_blocks <= 0) {
+		return -ENOSPC;
 	}
 
 
 	union Block parent_block = {};
 	int res = get_path_block((char *) subpath, &parent_block);
 
-	
+	int block_num = res;
 	if (path_tokens_sz == 1) {
-		read_Block(&parent_block, sb.info.root_block);
+		block_num = sb.info.root_block;
 	} else if (res < 0) {
 		return res;
 	}
 
-	
-	for (int i = 0; i < _MAX_DIR_NUM; i++) {
-		struct DirectoryEntry parent_dir_ent = parent_block.block.dir_ents[i];
-		if (!parent_dir_ent.in_use) {
-			parent_dir_ent.in_use = 2;
-			parent_dir_ent.start_block = sb.info.free_block;
-			parent_dir_ent.file_length = 0;
-			strcpy(parent_dir_ent.file_name, file_name);
-			memcpy(&parent_block.block.dir_ents[i], &parent_dir_ent, sizeof(struct DirectoryEntry));
-			break;
+	struct FatEntry *prev = &table[res];
+	struct FatEntry *next = prev;
+
+	short wroteToBlock = 0;
+
+dirLoop:
+	while (!wroteToBlock) {
+		read_Block(&parent_block, block_num);
+		for (int i = 0; i < _MAX_DIR_NUM; i++) {
+			union DirectoryEntry parent_dir_ent = parent_block.block.dir_ents[i];
+			if (!parent_dir_ent.hardlink.in_use) {
+				parent_dir_ent.hardlink.in_use = 2;
+				parent_dir_ent.hardlink.start_block = sb.info.free_block;
+				parent_dir_ent.hardlink.file_length = 0;
+				strcpy(parent_dir_ent.hardlink.file_name, file_name);
+				memcpy(&parent_block.block.dir_ents[i], &parent_dir_ent, sizeof(union DirectoryEntry));
+				wroteToBlock = 1;
+				goto dirLoop;
+			}
 		}
-		if (i == _MAX_DIR_NUM - 1) {
-			return -ENOSPC;
+
+		prev = next;
+		next = &table[next->next];
+		block_num = prev->next;
+		if (block_num == -1) {
+			printf("making new block\n");
+			if (sb.info.num_free_blocks <= 0) {
+				return -ENOSPC;
+			}
+
+			struct FatEntry *temp = &table[sb.info.free_block];
+			temp->in_use = 1;
+			prev->next = sb.info.free_block;
+
+			union Block new_blk = {};
+			memset(&new_blk, 0, sizeof(union Block));
+			write_Block(&new_blk, sb.info.free_block);
+
+			sb.info.free_block = temp->next;
+			sb.info.num_free_blocks--;
+			write_SuperBlock(&sb);
+
+			temp->next = -1;
+			next = temp;
+			block_num = prev->next;
+			write_FatTable(table);
 		}
 	}
 
-	write_Block(&parent_block, res);
+	write_Block(&parent_block, block_num);
 
 	struct FatEntry *temp = &table[sb.info.free_block];
 	
@@ -569,33 +613,37 @@ static int fat_mknod(const char* path, mode_t mode, dev_t rdev) {
 	sb.info.free_block = temp->next;
 	temp->next   = -1;
 	temp->in_use = 2;
+	sb.info.num_free_blocks--;
 	write_FatTable(table);
 	write_SuperBlock(&sb);
 
-
+	printf("mknod free\n");
 	free(subpath);
 	free(file_name);
 	return 0;
 }
 
 static int fat_open(const char* path, struct fuse_file_info* fi) {
-	struct DirectoryEntry dir_ent = {};
-	int res = read_DirectoryEntry(path, &dir_ent);
-	return res;
-}
-
-static int fat_read(const char* path, char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-	struct DirectoryEntry dir_ent = {};
+	union DirectoryEntry dir_ent = {};
 	int res = read_DirectoryEntry(path, &dir_ent);
 	if (res < 0) {
 		return res;
-	} else if (size+offset > dir_ent.file_length) {
-		size = dir_ent.file_length - offset;
+	}
+	return 0;
+}
+
+static int fat_read(const char* path, char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
+	union DirectoryEntry dir_ent = {};
+	int res = read_DirectoryEntry(path, &dir_ent);
+	if (res < 0) {
+		return res;
+	} else if (size+offset > dir_ent.hardlink.file_length) {
+		size = dir_ent.hardlink.file_length - offset;
 	}
 
-	struct FatEntry *prev = &table[dir_ent.start_block];
-	struct FatEntry *next = &table[dir_ent.start_block];
-	int block_num = dir_ent.start_block;
+	struct FatEntry *prev = &table[dir_ent.hardlink.start_block];
+	struct FatEntry *next = &table[dir_ent.hardlink.start_block];
+	int block_num = dir_ent.hardlink.start_block;
 	while (offset > _BLOCK_SIZE) {
 		if (table[prev->next].next == -1) {
 			return 0;
@@ -628,47 +676,51 @@ static int fat_read(const char* path, char *buf, size_t size, off_t offset, stru
 		buf_ptr += blk_read_sz;
 		read_acc += blk_read_sz;
 	}
-
 	return read_acc;
 }
 
 // Works
 static int fat_write(const char* path, const char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-	struct DirectoryEntry dir_ent = {};
+	union DirectoryEntry dir_ent = {};
 	int res = read_DirectoryEntry(path, &dir_ent);
+
 	if (res < 0) {
 		return res;
 	}
-	
-	union Block parent_block = {};
+
+	union Block parent_block = {};	
 	read_Block(&parent_block, res);
+
 	for (int i = 0; i < _MAX_DIR_NUM; i++) {
-		if(!strcmp(parent_block.block.dir_ents[i].file_name, dir_ent.file_name)) {
-			parent_block.block.dir_ents[i].file_length = max(offset+size, parent_block.block.dir_ents[i].file_length);
+		union DirectoryEntry parent_dir_ent = parent_block.block.dir_ents[i];
+
+		if(parent_dir_ent.hardlink.in_use && !strcmp(parent_dir_ent.hardlink.file_name, dir_ent.hardlink.file_name)) {
+			parent_block.block.dir_ents[i].hardlink.file_length = max(offset+size, parent_block.block.dir_ents[i].hardlink.file_length);
+			break;
 		}
 	}
 	write_Block(&parent_block, res);
 
-	struct FatEntry *prev = &table[dir_ent.start_block];
+	struct FatEntry *prev = &table[dir_ent.hardlink.start_block];
 	struct FatEntry *next = prev;
-	int block_num = dir_ent.start_block;
+	int block_num = dir_ent.hardlink.start_block;
 	while (offset > sizeof(union Block)) {
 		if (next->next >= 0) {
 			prev = next;
 			next = &table[next->next];
 		} else {
 			// Change next block to be new block.
-			if (sb.info.free_block >= sb.info.n_blocks) {
+			if (sb.info.num_free_blocks <= 0) {
 				return -ENOSPC;
 			}
-			// TODO: figure out if this works
+
 			next->next = sb.info.free_block;
 
 			// Read in the next block.
 			struct FatEntry *temp = &table[sb.info.free_block];
-			printf("in else\n");
 			// Modify the SuperBlock's free_block head.
 			sb.info.free_block = temp->next;
+			sb.info.num_free_blocks--;
 			temp->in_use = 2;
 			temp->next = -1;
 			
@@ -698,13 +750,14 @@ static int fat_write(const char* path, const char *buf, size_t size, off_t offse
 			prev = next;
 			next = &table[next->next];
 		} else {
-			if (sb.info.free_block >= sb.info.n_blocks) {
+			if (sb.info.num_free_blocks <= 0) {
 				return -ENOSPC;
 			}
 			next->next = sb.info.free_block;
 			struct FatEntry *temp = &table[next->next];
 			
-			sb.info.free_block = temp->next;			
+			sb.info.free_block = temp->next;
+			sb.info.num_free_blocks--;			
 			temp->in_use = 2;
 			temp->next = -1;
 			prev = next;
@@ -720,16 +773,13 @@ static int fat_write(const char* path, const char *buf, size_t size, off_t offse
 		buf_ptr += block_write_sz;
 	}
 	free(curr_block);
-	
 	return write_acc;
 }
 
-// Presumably works
 static int fat_release(const char* path, struct fuse_file_info *fi) {
-	struct DirectoryEntry dir_ent = {};
+	union DirectoryEntry dir_ent = {};
 	int res = read_DirectoryEntry(path, &dir_ent);
 	if (res < 0) {
-		printf("error in release\n");
 		return res;
 	}
 	return 0;
@@ -755,23 +805,23 @@ static int fat_truncate(const char* path, off_t size) {
 	}
 
 	
-	struct DirectoryEntry parent_dir_ent = {};
+	union DirectoryEntry parent_dir_ent = {};
 	int i;
 	for (i = 0; i < _MAX_DIR_NUM; i++) {
 		parent_dir_ent = parent_block.block.dir_ents[i];
-		if (parent_dir_ent.in_use && !strcmp(parent_dir_ent.file_name, file_name)) {
+		if (parent_dir_ent.hardlink.in_use && !strcmp(parent_dir_ent.hardlink.file_name, file_name)) {
 			break;
 		} else if (i == _MAX_DIR_NUM-1) {
 			return -ENOENT;
 		}
 	}
 
-	int orig_size = parent_block.block.dir_ents[i].file_length;
-	parent_block.block.dir_ents[i].file_length = size;
+	int orig_size = parent_block.block.dir_ents[i].hardlink.file_length;
+	parent_block.block.dir_ents[i].hardlink.file_length = size;
 	write_Block(&parent_block, res);
 
 	if (orig_size <= size) {
-		int n_zeros = size - parent_block.block.dir_ents[i].file_length;
+		int n_zeros = size - parent_block.block.dir_ents[i].hardlink.file_length;
 		char * zeros = malloc(n_zeros);		
 		memset(zeros, 0, n_zeros);
 		int res = fat_write(path, zeros, n_zeros, orig_size, NULL);
@@ -800,6 +850,7 @@ static int fat_truncate(const char* path, off_t size) {
 	while(table[curr].next != -1) {
 		table[curr].in_use = 0;
 		curr = table[curr].next;
+		sb.info.num_free_blocks++;
 	}
 
 	
@@ -819,7 +870,128 @@ static int fat_truncate(const char* path, off_t size) {
 }
 
 // Works
+// TODO: Remove all of the allocated blocks
 static int fat_rmdir(const char* path) {
+	char *subpath = malloc(4096);
+	char *file_name = malloc(4096);
+	split_subpath_filename((char *) path, subpath, file_name);
+
+	union Block parent_block = {};
+	int res = get_path_block((char *) subpath, &parent_block);
+	if (res < 0) {
+		return res;
+	}
+
+	int parent_block_num = res;
+	struct FatEntry *parent_next = &table[res];
+	struct FatEntry *parent_prev = parent_next;
+	short foundParentEntry = 0;
+	union DirectoryEntry parent_dir_ent = {};
+	int i = 0;
+	
+parentLoop:
+	while (parent_block_num >= 0 && !foundParentEntry) {
+		read_Block(&parent_block, parent_block_num);
+		parent_prev = parent_next;
+		parent_next = &table[parent_next->next];
+		
+		for (i = 0; i < _MAX_DIR_NUM; i++) {
+			parent_dir_ent = parent_block.block.dir_ents[i];
+			if (parent_dir_ent.hardlink.in_use && !strcmp(parent_dir_ent.hardlink.file_name, file_name)) {
+				foundParentEntry = 1;
+				goto parentLoop;
+			}
+		}
+
+		parent_block_num = parent_prev->next;
+	}
+
+	if (!foundParentEntry) {
+		return -ENOENT;
+	}
+	
+	int block_num = parent_dir_ent.hardlink.start_block;
+	struct FatEntry *next = &table[block_num];
+	union Block curr_block = {};
+	while(block_num >= 0) {
+		read_Block(&curr_block, block_num);
+		next = &table[next->next];
+		
+		memset(&curr_block, 0, _BLOCK_SIZE);
+		write_Block(&curr_block, block_num);
+		int temp = table[block_num].next;
+		table[block_num].in_use = 0;
+		table[block_num].next = sb.info.free_block;
+		sb.info.free_block = block_num;
+		block_num = temp;
+		sb.info.num_free_blocks++;
+		write_FatTable(table);
+		write_SuperBlock(&sb);
+	}
+
+	memset(&parent_block.block.dir_ents[i], 0, sizeof(union DirectoryEntry));
+	write_Block(&parent_block, parent_block_num);	
+	
+	return 0;
+}
+
+static int fat_symlink(const char* to, const char* from) {
+	char *subpath_from = malloc(4096);
+	char *file_name_from = malloc(4096);
+	split_subpath_filename((char *) from, subpath_from, file_name_from);
+
+	union Block *parent_block = malloc(_BLOCK_SIZE);
+	int res = get_path_block((char *) subpath_from, parent_block);
+	
+	if (res < 0) {
+		return res;
+	}
+
+	int block_num = res;
+	struct FatEntry *prev = &table[block_num];
+	struct FatEntry *next = prev;
+	
+	short dir_found = 0;
+dirLoop:
+	while (block_num >= 0 && !dir_found) {
+		read_Block(parent_block, block_num);
+
+		union DirectoryEntry parent_dir_ent_from = {};
+		int j;
+		for (j = 0; j < _MAX_DIR_NUM; j++) {
+			parent_dir_ent_from = parent_block->block.dir_ents[j];
+			if (!parent_dir_ent_from.symlink.in_use) {
+				parent_block->block.dir_ents[j].symlink.in_use = 3;
+				strcpy(parent_block->block.dir_ents[j].symlink.file_name, file_name_from);
+				strcpy(parent_block->block.dir_ents[j].symlink.file_to, to);
+				dir_found = 1;
+				goto dirLoop;
+			}
+		}
+
+		if (next->next < 0) {
+			if (sb.info.num_free_blocks <= 0) {
+				return -ENOSPC;
+			}
+			struct FatEntry *temp = malloc(sizeof(struct FatEntry));
+			temp = &table[sb.info.free_block];
+			next->next = sb.info.free_block;
+			sb.info.free_block = temp->next;
+			sb.info.num_free_blocks--;
+			temp->next = -1;
+			write_SuperBlock(&sb);
+			write_FatTable(table);
+		}
+		prev = next;
+		next = &table[next->next];
+		block_num = prev->next;
+	}
+	
+	write_Block((union Block *) parent_block, block_num);
+	return 0;
+}
+
+static int fat_readlink(const char* path, char* buf, size_t size) {
 	char *subpath = malloc(4096);
 	char *file_name = malloc(4096);
 	split_subpath_filename((char *) path, subpath, file_name);
@@ -831,109 +1003,40 @@ static int fat_rmdir(const char* path) {
 		return res;
 	}
 
-	struct DirectoryEntry parent_dir_ent = {};
-	int i;
-	for (i = 0; i < _MAX_DIR_NUM; i++) {
-		parent_dir_ent = parent_block.block.dir_ents[i];
-		if (parent_dir_ent.in_use && !strcmp(parent_dir_ent.file_name, file_name)) {
-			break;
-		} else if (i == _MAX_DIR_NUM-1) {
-			return -ENOENT;
-		}
-	}
+	int block_num = res;
+	struct FatEntry *prev = &table[block_num];
+	struct FatEntry *next = prev;
 
-	union Block dir_block = {};
-	read_Block(&dir_block, parent_dir_ent.start_block);
-	int count = 0;
-	for (int j = 0; j < _MAX_DIR_NUM; j++) {
-		if (dir_block.block.dir_ents[j].in_use) {
-			count++;
-		}
-	}
-
-	if (count > 2) {
-		return -1;
-	}
-
-	struct FatEntry *entry = &table[parent_dir_ent.start_block];
-	entry->next = sb.info.free_block;
-	entry->in_use = 0;
-	sb.info.free_block = parent_dir_ent.start_block;
-	write_FatTable(table);
-	write_SuperBlock(&sb);
-
-	// 0 the block
-	memset(&dir_block, 0, sizeof(union Block));
-	write_Block(&dir_block, parent_dir_ent.start_block);
-
-	// 0 the entry in the parent directory entry
-	memset(&parent_block.block.dir_ents[i], 0, sizeof(struct DirectoryEntry));
-	write_Block(&parent_block, parent_block.block.dir_ents[0].start_block);	
-	
-	return 0;
-}
-
-static int fat_symlink(const char* to, const char* from) {
-	char *subpath_to = malloc(4096);
-	char *file_name_to = malloc(4096);
-	split_subpath_filename((char *) to, subpath_to, file_name_to);
-
-	union Block parent_block_to = {};
-	int res = get_path_block((char *) subpath_to, &parent_block_to);
-	
-	if (res < 0) {
-		return res;
-	}
-
-	struct DirectoryEntry parent_dir_ent_to = {};
-	int i;
-	for (i = 0; i < _MAX_DIR_NUM; i++) {
-		parent_dir_ent_to = parent_block_to.block.dir_ents[i];
-		if (parent_dir_ent_to.in_use && !strcmp(parent_dir_ent_to.file_name, file_name_to)) {
-			break;
-		} else if (i == _MAX_DIR_NUM-1) {
-			return -ENOENT;
-		}
-	}
-
-	char *subpath_from = malloc(4096);
-	char *file_name_from = malloc(4096);
-	split_subpath_filename((char *) from, subpath_from, file_name_from);
-
-	union Block parent_block_from = {};
-	int res2 = get_path_block((char *) subpath_from, &parent_block_from);
-	
-	if (res2 < 0) {
-		return res2;
-	}
-
-	struct DirectoryEntry parent_dir_ent_from = {};
+	short dir_found = 0;
 	int j;
-	for (j = 0; j < _MAX_DIR_NUM; j++) {
-		parent_dir_ent_from = parent_block_from.block.dir_ents[j];
-		if (!parent_dir_ent_from.in_use) {
-			strcpy(parent_block_from.block.dir_ents[j].file_name, file_name_from);
-			parent_block_from.block.dir_ents[j].in_use = 1;
-			parent_block_from.block.dir_ents[j].start_block = parent_dir_ent_to.start_block;
-			parent_block_from.block.dir_ents[j].file_length = parent_dir_ent_to.file_length;
-			break;
-		} else if (j == _MAX_DIR_NUM-1) {
-			return -ENOENT;
+
+dirLoop:
+	while (block_num >= 0 && !dir_found) {
+		read_Block(&parent_block, block_num);
+
+		union DirectoryEntry parent_dir_ent_from = {};
+		for (j = 0; j < _MAX_DIR_NUM; j++) {
+			parent_dir_ent_from = parent_block.block.dir_ents[j];
+			if (!strcmp(parent_dir_ent_from.symlink.file_name, file_name)) {
+				dir_found = 1;
+				goto dirLoop;
+			}
 		}
+
+		prev = next;
+		next = &table[next->next];
+		block_num = prev->next;
 	}
 
-	write_Block(&parent_block_from, res2);
+	if (!dir_found) {
+		return -ENOENT;
+	}
+
+	memcpy(buf, parent_block.block.dir_ents[j].symlink.file_to, size);
 	return 0;
 }
 
-// TODO: fgetattr, readlink, unlink, symlink
-// Correct number of hard links
-// Correct number of remaining files
-// Fix symlink behavior
-
-// DONE: close (i.e., release), create, mknod (only for plain files), 
-// open, read, and write, truncate, rmdir, statfs,
-
+// TODO: Correct number of hard links
 
 static int fat_statfs(const char* path, struct statvfs* stbuf) {
 	stbuf->f_bsize  = sizeof(union Block);
@@ -942,11 +1045,11 @@ static int fat_statfs(const char* path, struct statvfs* stbuf) {
 	stbuf->f_namemax = _MAX_FILE_NAME_SZ;
 	stbuf->f_blocks = sb.info.n_blocks;
 	stbuf->f_files  = sb.info.n_blocks;
-	stbuf->f_flag   = 0666;
-	stbuf->f_bfree  = sb.info.n_blocks;
-	stbuf->f_bavail = sb.info.n_blocks;
-	stbuf->f_ffree  = sb.info.n_blocks;
-	stbuf->f_favail = sb.info.n_blocks;
+	stbuf->f_flag   = 0755;
+	stbuf->f_bfree  = sb.info.num_free_blocks;
+	stbuf->f_bavail = sb.info.num_free_blocks;
+	stbuf->f_ffree  = sb.info.num_free_blocks;
+	stbuf->f_favail = sb.info.num_free_blocks;
 	return 0;
 }
 
@@ -967,9 +1070,80 @@ static int fat_flush(const char* path, struct fuse_file_info* fi) {
 	return 0;
 }
 
+static int fat_fgetattr(const char* path, struct stat* stbuf, struct fuse_file_info *fi) {
+	return fat_getattr(path, stbuf);
+}
+
 static int fat_getxattr(const char* path, const char* name, char* value, size_t size) {
 	return 0;
 }
+
+static int fat_unlink(const char* path) {
+	char *subpath = malloc(4096);
+	char *file_name = malloc(4096);
+	split_subpath_filename((char *) path, subpath, file_name);
+
+	union Block parent_block = {};
+	int res = get_path_block((char *) subpath, &parent_block);
+	if (res < 0) {
+		return res;
+	}
+
+	int parent_block_num = res;
+	struct FatEntry *parent_next = &table[res];
+	struct FatEntry *parent_prev = parent_next;
+	short foundParentEntry = 0;
+	union DirectoryEntry parent_dir_ent = {};
+	int i = 0;
+	
+parentLoop:
+	while (parent_block_num >= 0 && !foundParentEntry) {
+		read_Block(&parent_block, parent_block_num);
+		parent_prev = parent_next;
+		parent_next = &table[parent_next->next];
+		
+		for (i = 0; i < _MAX_DIR_NUM; i++) {
+			parent_dir_ent = parent_block.block.dir_ents[i];
+			if (parent_dir_ent.symlink.in_use && !strcmp(parent_dir_ent.symlink.file_name, file_name)) {
+				foundParentEntry = 1;
+				goto parentLoop;
+			}
+		}
+
+		parent_block_num = parent_prev->next;
+	}
+
+	if (!foundParentEntry) {
+		return -ENOENT;
+	}
+
+	if (parent_dir_ent.hardlink.in_use == 1) {
+		int block_num = parent_dir_ent.hardlink.start_block;
+		struct FatEntry *next = &table[block_num];
+		union Block curr_block = {};
+		while(block_num >= 0) {
+			read_Block(&curr_block, block_num);
+			next = &table[next->next];
+			
+			memset(&curr_block, 0, _BLOCK_SIZE);
+			write_Block(&curr_block, block_num);
+			int temp = table[block_num].next;
+			table[block_num].in_use = 0;
+			table[block_num].next = sb.info.free_block;
+			sb.info.free_block = block_num;
+			block_num = temp;
+			sb.info.num_free_blocks++;
+			write_FatTable(table);
+			write_SuperBlock(&sb);
+		}
+	
+	}
+	
+	memset(&parent_block.block.dir_ents[i], 0, sizeof(union DirectoryEntry));
+	write_Block(&parent_block, parent_block_num);	
+	return 0;
+}
+
 
 
 static struct fuse_operations fat_oper = {
@@ -992,6 +1166,9 @@ static struct fuse_operations fat_oper = {
 	.chown		= fat_chown,
 	.utimens	= fat_utimens,
 	.flush		= fat_flush,
+	.readlink	= fat_readlink,
+	.fgetattr	= fat_fgetattr,
+	.unlink		= fat_unlink,
 #ifdef HAVE_SETXATTR
 	.getxattr	= fat_getxattr,
 #endif

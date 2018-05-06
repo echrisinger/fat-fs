@@ -2,7 +2,7 @@
 #define _BLOCK_SIZE 4096
 #define _SUPERBLOCK_SIZE 512
 #define _MAX_DIR_NUM 8
-#define _MAX_FILE_NAME_SZ 24
+#define _MAX_FILE_NAME_SZ 128
 #define _MAGIC_NUM 0x1234abcd
 
 /*
@@ -17,11 +17,22 @@ struct FatEntry {
     short next;
 };
 
-struct DirectoryEntry {
-    short in_use;
-    char file_name[_MAX_FILE_NAME_SZ];
-    int32_t start_block;
-    int32_t file_length; //only for use on files. Irrelevant for directories, as they are only one block.
+union DirectoryEntry {
+    struct {
+        short in_use;
+        char file_name[_MAX_FILE_NAME_SZ];
+        int32_t start_block;
+        int32_t file_length; //only for use on files. Irrelevant for directories, as they are only one block.
+    } hardlink;
+
+    struct {
+        short in_use;
+        char file_name[_MAX_FILE_NAME_SZ];
+        char file_to[_MAX_FILE_NAME_SZ];
+    } symlink;
+};
+
+union DirectoryEntrySymLink {
 };
 
 union Block {
@@ -29,7 +40,7 @@ union Block {
         int32_t start_block;
         int32_t file_length;
         char file_name[_MAX_FILE_NAME_SZ];
-        struct DirectoryEntry dir_ents[_MAX_DIR_NUM];
+        union DirectoryEntry dir_ents[_MAX_DIR_NUM];
     } block;
     char pad[_BLOCK_SIZE];
 };
